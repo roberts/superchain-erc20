@@ -2,16 +2,45 @@
 pragma solidity ^0.8.25;
 
 // Contracts
-import { ERC20 } from "@solady-v0.0.245/tokens/ERC20.sol";
-
-// Libraries
-import { Predeploys } from "src/libraries/Predeploys.sol";
-import { Unauthorized } from "src/libraries/errors/CommonErrors.sol";
-
-// Interfaces
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { ISemver } from "interfaces/universal/ISemver.sol";
-import { IERC7802, IERC165 } from "interfaces/L2/IERC7802.sol";
+import { ERC20 } from "@solady-v0.0.245/tokens/ERC20.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
+// ---- Minimal inlined Optimism types ----
+
+/// @notice Error for an unauthorized CALLER.
+error Unauthorized();
+
+/// @title ISemver
+/// @notice Simple interface to expose semantic version of a contract.
+interface ISemver {
+    /// @notice Semantic version.
+    /// @custom:semver The version string should follow semver, e.g. "1.0.0".
+    function version() external view returns (string memory);
+}
+
+/// @title IERC7802
+/// @notice Minimal interface for ERC-7802 cross-chain mint/burn hooks used by SuperchainERC20.
+interface IERC7802 is IERC165 {
+    /// @notice Emitted when tokens are minted cross-chain.
+    event CrosschainMint(address indexed to, uint256 amount, address indexed caller);
+
+    /// @notice Emitted when tokens are burned cross-chain.
+    event CrosschainBurn(address indexed from, uint256 amount, address indexed caller);
+
+    /// @notice Mint tokens to an address. Intended to be called by a bridge contract.
+    function crosschainMint(address to, uint256 amount) external;
+
+    /// @notice Burn tokens from an address. Intended to be called by a bridge contract.
+    function crosschainBurn(address from, uint256 amount) external;
+}
+
+/// @title Predeploys
+/// @notice Contains constant addresses for protocol contracts that are pre-deployed to the L2 system.
+library Predeploys {
+    /// @notice Address of the SuperchainTokenBridge predeploy.
+    address internal constant SUPERCHAIN_TOKEN_BRIDGE = 0x4200000000000000000000000000000000000028;
+}
 
 /// @title SuperchainERC20
 /// @notice A standard ERC20 extension implementing IERC7802 for unified cross-chain fungibility

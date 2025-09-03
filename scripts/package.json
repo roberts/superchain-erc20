@@ -1,0 +1,13 @@
+{
+  "name": "superchain-erc20-scripts",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Helper scripts for deterministic CREATE3 deployments and vanity salt search",
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
+  "scripts": {
+    "find:vanity": "node find_vanity_salt.js"
+  }
+}

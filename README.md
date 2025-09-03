@@ -9,14 +9,16 @@ A minimal, Superchain-aware ERC-20 extension built on Solady’s high-performanc
 - Restricts mint/burn to the SuperchainTokenBridge predeploy address (0x4200000000000000000000000000000000000028).
 - Exposes a semantic version via ISemver.
 - Advertises ERC165 support for IERC7802, and returns the IERC20 interface id for convenience.
+- Canonical supply policy: mints the fixed 100,000,000 supply only on Ethereum mainnet to the owner; other chains start with zero and rely exclusively on bridge-managed mint/burn.
 
 Notes:
-- The contract is abstract. You inherit and implement name/symbol (and optionally override hooks) for a concrete token.
+- The base is abstract; `SwampGoldToken` is the concrete token in this repo.
 - Cross-chain actions: `crosschainMint` and `crosschainBurn` can only be called by the SuperchainTokenBridge (the bridge will call these via OP messaging under the hood).
+- The initial 100M supply is minted only when deployed on chain id 1 (Ethereum mainnet) to the owner. On other chains, no constructor mint occurs.
 
 ## Foundry Deployment Overview
 
-Add details here..
+Deterministic end-to-end with CREATE2 + CREATE3 and a vanity address target. See below.
 
 ## Deterministic deployments with vanity address targets
 
@@ -47,6 +49,12 @@ Key invariants to keep addresses identical:
 Once `Create3Deployer` is identical across chains:
 - Run your vanity search using `predict(salt)` from the deployer to find a 2+5 address for the token.
 - Deploy the token with `deploy(initCode, salt)` on each chain reusing the same salt.
+
+Canonical supply policy specifics
+- The token contract exposes a `CANONICAL_CHAIN_ID` constant set to `1` and an `isCanonicalChain()` helper.
+- The constructor mints the full fixed supply to the owner only if `isCanonicalChain()` is true.
+- Deploy to Ethereum mainnet first to mint the initial 100M to the owner; then bridge to OP chains as needed.
+- On non-mainnet chains, initial supply is zero and all supply movements are via bridge `crosschainMint`/`crosschainBurn`.
 
 ## How to deploy with Foundry (deterministic + vanity)
 
@@ -118,6 +126,11 @@ Typical flow with CREATE3
 - CREATE3 lets you reuse the same vanity address across Ethereum mainnet and OP chains.
 - The final address depends on: deployer/factory address and salt (not your EOA nonce, not init code).
 - Prefer parallelized search to make the 2+5 vanity target practical.
+
+### Files of interest
+- `contracts/superchainerc20.sol`: Abstract base + concrete `SwampGoldToken`. Contains `CANONICAL_CHAIN_ID = 1`, `isCanonicalChain()`, bridge hooks, and mainnet-only constructor mint to the owner guarded by `isCanonicalChain()`.
+- `contracts/deployer.sol`: Minimal CREATE3 deployer with deterministic address prediction.
+- `contracts/lib/readme.md`: Background on predeploys and Solady ERC20.
 
 ## Deployment flow (high level)
 

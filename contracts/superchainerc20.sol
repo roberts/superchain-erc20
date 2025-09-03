@@ -49,6 +49,8 @@ library Predeploys {
 ///         documentation including all warnings, comments and natSpec, before extending or
 ///         interacting with this contract.
 abstract contract SuperchainERC20 is ERC20, IERC7802, ISemver {
+    /// @notice Emitted when the canonical initial supply is minted on the canonical chain.
+    event InitialSupplyMinted(address indexed to, uint256 amount, uint256 chainId);
     /// @notice Semantic version.
     /// @custom:semver 1.0.2
     function version() external view virtual returns (string memory) {
@@ -81,5 +83,102 @@ abstract contract SuperchainERC20 is ERC20, IERC7802, ISemver {
     function supportsInterface(bytes4 _interfaceId) public view virtual returns (bool) {
         return _interfaceId == type(IERC7802).interfaceId || _interfaceId == type(IERC20).interfaceId
             || _interfaceId == type(IERC165).interfaceId;
+    }
+}
+
+/// @title Ownable (minimal)
+/// @notice Lightweight ownership control for admin-only actions.
+contract Ownable {
+    /// @notice Current owner.
+    address public owner;
+
+    /// @notice Emitted when ownership is transferred.
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /// @notice Error for non-owner calls.
+    error NotOwner();
+    /// @notice Error for zero address.
+    error ZeroAddress();
+
+    constructor() {
+        owner = msg.sender;
+        emit OwnershipTransferred(address(0), owner);
+    }
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert NotOwner();
+        _;
+    }
+
+    /// @notice Transfer ownership to `newOwner`.
+    function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) revert ZeroAddress();
+        emit OwnershipTransferred(owner, newOwner);
+        owner = newOwner;
+    }
+}
+
+/// @title Superchain ERC20 Token (Concrete)
+/// @notice Concrete implementation of SuperchainERC20 with configurable metadata and optional initial mint.
+/// @dev Name, symbol, and decimals are stored to allow constructor configuration.
+contract SwampGoldToken is SuperchainERC20, Ownable {
+    // ERC-20 metadata.
+    string private _name;
+    string private _symbol;
+
+    /// @notice Canonical chain id for initial supply (Ethereum mainnet).
+    uint256 public constant CANONICAL_CHAIN_ID = 1;
+
+    /// @notice Returns true if running on the canonical chain.
+    function isCanonicalChain() public view returns (bool) {
+        return block.chainid == CANONICAL_CHAIN_ID;
+    }
+
+    /// @notice Deploy the fixed-supply Swamp Gold token (18 decimals).
+    /// @dev On the canonical chain (Ethereum mainnet), mints 100,000,000 tokens (18 decimals) to the owner.
+    constructor() {
+        _name = "Swamp Gold";
+        _symbol = "GOLD";
+
+        // Explicitly set the owner to the requested address to avoid CREATE3 proxy-as-sender issues.
+        address initialOwner = 0xDEB333a3240eb2e1cA45D38654c26a8C1AAd0507;
+        emit OwnershipTransferred(owner, initialOwner);
+        owner = initialOwner;
+
+        // Mint the fixed 100M supply only on the canonical chain (Ethereum mainnet) to the owner.
+    if (isCanonicalChain()) {
+            uint256 totalSupply = 100_000_000 ether;
+            _mint(owner, totalSupply);
+            emit InitialSupplyMinted(owner, totalSupply, block.chainid);
+        }
+    }
+
+    /// @inheritdoc SuperchainERC20
+    function name() public view override returns (string memory) {
+        return _name;
+    }
+
+    /// @inheritdoc SuperchainERC20
+    function symbol() public view override returns (string memory) {
+        return _symbol;
+    }
+
+    /// @notice Accept ETH sent to this contract.
+    receive() external payable {}
+
+    /// @notice Owner can withdraw ETH held by this contract to the owner.
+    function withdrawStuckETH() public onlyOwner {
+        uint256 bal = address(this).balance;
+        if (bal == 0) return;
+        (bool ok, ) = payable(owner).call{value: bal}("");
+        require(ok, "ETH transfer failed");
+    }
+
+    /// @notice Owner can withdraw any ERC20 tokens held by this contract to the owner.
+    function withdrawStuckTokens(address tkn) public onlyOwner {
+        uint256 amount = IERC20(tkn).balanceOf(address(this));
+        require(amount > 0, "No tokens");
+        bool ok = IERC20(tkn).transfer(owner, amount);
+        require(ok, "Token transfer failed");
     }
 }

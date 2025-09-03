@@ -133,11 +133,17 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
 
     string public websiteLink = "https://swamp.gold";
 
+    /// @notice Returns the fixed global supply across the Superchain (18 decimals).
+    /// @dev Distinct from totalSupply(), which is per-chain and reflects local bridged amounts.
+    function fixedGlobalSupply() public pure returns (uint256) {
+        return 100_000_000 ether;
+    }
+
     /// @notice Canonical chain id for initial supply (Ethereum mainnet).
     uint256 public constant CANONICAL_CHAIN_ID = 1;
 
     /// @notice Per-chain trading status. When false, non-owner transfers are blocked.
-    /// @dev This is intentionally per-chain because each deployment has independent storage.
+    /// @dev This is intentionally per-chain because each deployment has independent liquidity pool crreation.
     bool public chainTradable;
 
     /// @notice Emitted when trading status is changed.
@@ -152,14 +158,14 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
     }
 
     /// @notice Deploy the fixed-supply Swamp Gold token (18 decimals).
-    /// @dev On the canonical chain (Ethereum mainnet), mints 100,000,000 tokens (18 decimals) to the owner.
+    /// @dev On the canonical chain (Ethereum mainnet), mints total fixed global supply of tokens to owner.
     constructor() {
         // Explicitly set the owner to the requested address to avoid CREATE3 proxy-as-sender issues.
         address initialOwner = 0xDEB333a3240eb2e1cA45D38654c26a8C1AAd0507;
         emit OwnershipTransferred(owner, initialOwner);
         owner = initialOwner;
 
-    // Mint the fixed 100M supply only on the canonical chain (Ethereum mainnet) to the owner.
+    // Fixed global supply can only be released fully through initial deployment on canonical chain (Ethereum mainnet) to owner.
     if (isCanonicalChain()) {
             uint256 totalSupply = 100_000_000 ether;
             _mint(owner, totalSupply);

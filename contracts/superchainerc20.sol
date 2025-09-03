@@ -129,6 +129,16 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
     /// @notice Canonical chain id for initial supply (Ethereum mainnet).
     uint256 public constant CANONICAL_CHAIN_ID = 1;
 
+    /// @notice Per-chain trading status. When false, non-owner transfers are blocked.
+    /// @dev This is intentionally per-chain because each deployment has independent storage.
+    bool public chainTradable;
+
+    /// @notice Emitted when trading status is changed.
+    event TradingStatusChanged(bool enabled);
+
+    /// @notice Error thrown when trading is paused.
+    error TradingPaused();
+
     /// @notice Returns true if running on the canonical chain.
     function isCanonicalChain() public view returns (bool) {
         return block.chainid == CANONICAL_CHAIN_ID;
@@ -145,7 +155,7 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
         emit OwnershipTransferred(owner, initialOwner);
         owner = initialOwner;
 
-        // Mint the fixed 100M supply only on the canonical chain (Ethereum mainnet) to the owner.
+    // Mint the fixed 100M supply only on the canonical chain (Ethereum mainnet) to the owner.
     if (isCanonicalChain()) {
             uint256 totalSupply = 100_000_000 ether;
             _mint(owner, totalSupply);
@@ -180,5 +190,29 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
         require(amount > 0, "No tokens");
         bool ok = IERC20(tkn).transfer(owner, amount);
         require(ok, "Token transfer failed");
+    }
+
+    /// @notice Enable trading on this chain. Irreversible.
+    function enableTrading() external onlyOwner {
+        if (chainTradable) revert("Trading already enabled");
+        chainTradable = true;
+        emit TradingStatusChanged(true);
+    }
+
+    /// @dev Gating for transfers while paused.
+    /// Allows:
+    /// - Mints and burns (not routed via _transfer in Solady, but kept for clarity)
+    /// - Owner-related transfers (from or to owner) so the owner can seed liquidity or move tokens
+    /// Blocks:
+    /// - All other transfers while chainTradable == false
+    function _transfer(address from, address to, uint256 amount) internal override {
+        if (!chainTradable) {
+            // If neither side is the zero address (i.e., not mint/burn) and neither side is the owner,
+            // block the transfer while paused.
+            if (from != address(0) && to != address(0)) {
+                if (from != owner && to != owner) revert TradingPaused();
+            }
+        }
+        super._transfer(from, to, amount);
     }
 }

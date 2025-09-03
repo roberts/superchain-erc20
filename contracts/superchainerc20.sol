@@ -122,9 +122,16 @@ contract Ownable {
 /// @notice Concrete implementation of SuperchainERC20 with configurable metadata and optional initial mint.
 /// @dev Name, symbol, and decimals are stored to allow constructor configuration.
 contract SwampGoldToken is SuperchainERC20, Ownable {
-    // ERC-20 metadata.
-    string private _name;
-    string private _symbol;
+
+    function name() public pure override returns (string memory) {
+        return "Swamp Gold";
+    }
+
+    function symbol() public pure override returns (string memory) {
+        return "GOLD";
+    }
+
+    string public websiteLink = "https://swamp.gold";
 
     /// @notice Canonical chain id for initial supply (Ethereum mainnet).
     uint256 public constant CANONICAL_CHAIN_ID = 1;
@@ -147,9 +154,6 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
     /// @notice Deploy the fixed-supply Swamp Gold token (18 decimals).
     /// @dev On the canonical chain (Ethereum mainnet), mints 100,000,000 tokens (18 decimals) to the owner.
     constructor() {
-        _name = "Swamp Gold";
-        _symbol = "GOLD";
-
         // Explicitly set the owner to the requested address to avoid CREATE3 proxy-as-sender issues.
         address initialOwner = 0xDEB333a3240eb2e1cA45D38654c26a8C1AAd0507;
         emit OwnershipTransferred(owner, initialOwner);
@@ -161,16 +165,6 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
             _mint(owner, totalSupply);
             emit InitialSupplyMinted(owner, totalSupply, block.chainid);
         }
-    }
-
-    /// @inheritdoc SuperchainERC20
-    function name() public view override returns (string memory) {
-        return _name;
-    }
-
-    /// @inheritdoc SuperchainERC20
-    function symbol() public view override returns (string memory) {
-        return _symbol;
     }
 
     /// @notice Accept ETH sent to this contract.
@@ -214,5 +208,12 @@ contract SwampGoldToken is SuperchainERC20, Ownable {
             }
         }
         super._transfer(from, to, amount);
+    }
+
+    /**
+     * @dev Updates the websiteLink string with a new value
+     */
+    function updateWebsiteLink(string calldata newLink) external onlyOwner {
+        websiteLink = newLink;
     }
 }

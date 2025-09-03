@@ -8,40 +8,116 @@ A minimal, Superchain-aware ERC-20 extension built on Solady’s high-performanc
 - Implements IERC7802 to standardize cross-chain mint/burn semantics across the Superchain.
 - Restricts mint/burn to the SuperchainTokenBridge predeploy address (0x4200000000000000000000000000000000000028).
 - Exposes a semantic version via ISemver.
-- Advertises support for ERC165 (for IERC7802) and returns the IERC20 interface id for convenience.
+- Advertises ERC165 support for IERC7802, and returns the IERC20 interface id for convenience.
 
 Notes:
 - The contract is abstract. You inherit and implement name/symbol (and optionally override hooks) for a concrete token.
 - Cross-chain actions: `crosschainMint` and `crosschainBurn` can only be called by the SuperchainTokenBridge (the bridge will call these via OP messaging under the hood).
 
+## Foundry Deployment Overview
+
+Add details here..
+
 ## Deterministic deployments with vanity address targets
 
-Goal: Deploy the token with a vanity address that has 6 hex characters at the start and 6 at the end, and then reuse the exact same address on Ethereum mainnet and OP chains.
+Goal: get the same token address on L1 and OP chains while matching a 2+5 vanity pattern (2 hex prefix + 5 hex suffix).
 
-Two common approaches:
+At a glance
+- Address under CREATE3 depends only on: deployer contract address + salt.
+- Make the deployer address identical on all chains (use CREATE2), then reuse the same CREATE3 salt.
+- 2+5 vanity ≈ 28 bits (≈ 2^28 tries). Use a parallelized search for practicality.
 
-1) CREATE2
-- Address formula: keccak256(0xff ++ deployer ++ salt ++ keccak256(init_code))[12..32].
-- To get a vanity address, you brute-force the `salt` (and/or harmless init args) until the computed address matches your prefix/suffix pattern.
-- For cross-chain consistency, the deployer address, salt, and init_code must be identical on every chain.
+## Utilize CREATE2 to create CREATE3 Deployer
 
-2) CREATE3 (via a factory)
-- Pattern: a factory uses CREATE2 to deploy a temporary contract whose address depends on `salt`, then that contract uses CREATE to deploy your target at a deterministic address that depends only on the temporary contract address and a fixed nonce (usually 1).
-- Benefits: simplifies reproducibility by decoupling the target address from the caller’s nonce; you just need the same factory address and salt on every chain.
+Goal: get the same `Create3Deployer` contract address on every chain so CREATE3 yields identical token addresses for a given salt.
 
-Feasibility of 6+6 vanity
-- Constraining 6 hex at the start AND 6 at the end is 12 hex (48 bits) of constraint. Expected brute-force work is ~2^48 tries, which is impractical without significant compute (specialized miners/GPUs/clusters).
-- Practical targets for individual developers: 3+3 (24 bits, ~16.7M tries) or 4+4 (32 bits, ~4.3B tries) may be achievable with optimized search and parallelism. Consider relaxing the requirement or using a compute service.
+Deterministic recipe (CREATE2):
+- Build `initCode` for `contracts/deployer.sol` (constructor sets `owner = msg.sender`). If you want the same deployer address, keep the constructor args/bytecode identical across chains.
+- Pick a `salt` (bytes32). Keep it the same across chains.
+- Predict the deployer address with the CREATE2 formula:
+	- `address = keccak256(0xff ++ factoryAddress ++ salt ++ keccak256(initCode))[12:]`
+- Deploy via the factory’s `create2` method with the same `salt` and `initCode` on each chain.
+- Confirm the deployed address matches the prediction on each chain.
 
-Pragmatic strategy
-- Use a well-known CREATE3 factory at a consistent address on all target chains (or deploy your own factory to the same address using deterministic deployment).
-- Write an offline vanity search script that iterates salts and computes the resulting target address for your init_code until your pattern is matched.
-- Once a salt is found on mainnet, reuse the same bytecode, salt, and factory address across OP chains to reproduce the address.
+Key invariants to keep addresses identical:
+- Same factory address on each chain (canonical or deterministically deployed).
+- Same `salt`.
+- Same `initCode` (constructor args and compiler settings) for the deployer.
 
-Important requirements for same address across chains
-- Same bytecode (compiler version, settings, constructor params).
-- Same salt.
-- Same deployer/factory address on each chain.
+Once `Create3Deployer` is identical across chains:
+- Run your vanity search using `predict(salt)` from the deployer to find a 2+5 address for the token.
+- Deploy the token with `deploy(initCode, salt)` on each chain reusing the same salt.
+
+## How to deploy with Foundry (deterministic + vanity)
+
+Prereqs
+- Foundry installed and configured (forge, cast).
+- RPC URLs and a funded deployer key for each network.
+
+1) Deterministically deploy Create3Deployer with CREATE2
+- Choose a CREATE2 salt (bytes32 hex), e.g., SALT2 = 0x.... Keep the same across chains.
+- Use forge to deploy deterministically with CREATE2. Recent Foundry supports `--salt` to route via the universal CREATE2 deployer:
+
+```sh
+forge create contracts/deployer.sol:Create3Deployer \
+	--rpc-url $RPC \
+	--private-key $PK \
+	--salt $SALT2
+```
+
+- Repeat for each chain using the same $SALT2. Verify the deployer address is identical across chains.
+
+2) Offline vanity salt search for the token (2+5)
+- Use the deployed Create3Deployer to predict addresses without deploying the token:
+
+```sh
+# Single check
+cast call $DEPLOYER 'predict(bytes32)(address)' $SALT --rpc-url $RPC
+```
+
+- Brute-force: iterate salts and call `predict(bytes32)` until the 2+5 pattern matches. Run your script against any RPC; you’ll reuse the winning salt on all chains since the deployer address is identical.
+- Keep constructor args fixed during search; address doesn’t depend on init code with CREATE3, but fixing args keeps verification consistent.
+
+3) Build init code for your token
+- Encode constructor args into creation code with Foundry:
+
+```sh
+# Replace <Path:Contract> and args
+INIT_CODE=$(forge inspect <path:ContractName> creationCodeWithArgs <constructor-args>)
+```
+
+4) Deploy the token via Create3Deployer (CREATE3)
+- Use the vanity salt you found (SALT3) and the same deployer address on each chain:
+
+```sh
+cast send $DEPLOYER 'deploy(bytes,bytes32)(address)' $INIT_CODE $SALT3 \
+	--rpc-url $RPC \
+	--private-key $PK
+```
+
+- If you need to send ETH alongside deployment, use `deployWithValue(bytes,bytes32)` and add `--value` to cast.
+
+5) Repeat on OP chains
+- Reuse the same $DEPLOYER address and $SALT3. The token address will match across chains.
+
+## Solady CREATE3 (library) and this repo’s deployer
+
+- Source (library): https://github.com/Vectorized/solady/blob/main/src/utils/CREATE3.sol
+- In this repo, call it via `contracts/deployer.sol` (Create3Deployer), which wraps the library and exposes:
+	- `predict(bytes32 salt)` → uses `CREATE3.predictDeterministicAddress(salt, address(this))`
+	- `deploy(bytes initCode, bytes32 salt)` and `deployWithValue(bytes initCode, bytes32 salt)` → use `CREATE3.deployDeterministic`
+
+Typical flow with CREATE3
+1) Build init code from the compiled artifact (constructor args encoded as bytes).
+2) Off-chain, iterate salts and call `predictDeterministicAddress` to compute the address; check against the 2+5 vanity pattern.
+3) When a salt matches, deploy on mainnet by calling your `Create3Deployer.deploy(initCode, salt)` from the deployer at the agreed address.
+4) Repeat the exact same deployment on OP chains (same deployer address + same salt) to reproduce the address.
+
+### Notes
+
+- CREATE3 lets you reuse the same vanity address across Ethereum mainnet and OP chains.
+- The final address depends on: deployer/factory address and salt (not your EOA nonce, not init code).
+- Prefer parallelized search to make the 2+5 vanity target practical.
 
 ## Deployment flow (high level)
 
@@ -49,8 +125,7 @@ Important requirements for same address across chains
 - Compile with Foundry, pinning the compiler version and settings used for production.
 
 2) Vanity search (offline)
-- For CREATE2: iterate `salt` and compute the address from the formula; stop on a match.
-- For CREATE3: iterate `salt`, compute the factory-derived deployer and the final target address; stop on a match.
+- Iterate salts and compute `CREATE3.predictDeterministicAddress(salt, deployer)`; stop on a 2+5 match.
 
 3) Deploy to Ethereum mainnet
 - Use the selected salt and the exact same bytecode/constructor args through your deployment script.
@@ -74,4 +149,3 @@ Important requirements for same address across chains
 - contracts/superchainerc20.sol: The abstract Superchain-aware token base.
 - contracts/lib/solady/ERC20.sol: Reference copy of Solady v0.0.245 ERC20 (for inspection only).
 - contracts/lib/readme.md: Additional context on OP messaging, predeploys, and Solady notes.
-
